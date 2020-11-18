@@ -1,4 +1,7 @@
+if WITH_SERVER
 xlator_LTLIBRARIES = simple-quota.la
+endif
+
 xlatordir = $(libdir)/glusterfs/$(PACKAGE_VERSION)/xlator/features
 
 simple_quota_la_LDFLAGS = -module $(GF_XLATOR_DEFAULT_LDFLAGS)
