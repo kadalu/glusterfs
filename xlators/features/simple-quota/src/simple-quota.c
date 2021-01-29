@@ -850,6 +850,7 @@ int32_t
 sq_setxattr(call_frame_t *frame, xlator_t *this, loc_t *loc, dict_t *dict,
             int32_t flags, dict_t *xdata)
 {
+    sq_private_t *priv = this->private;
     int64_t val = 0;
     int32_t op_errno = EPERM;
 
@@ -861,6 +862,9 @@ sq_setxattr(call_frame_t *frame, xlator_t *this, loc_t *loc, dict_t *dict,
 
         if (frame->root->pid != GF_CLIENT_PID_QUOTA_HELPER)
             goto err;
+
+	/* we now know there is distribute on client */
+	priv->no_distribute = false;
 
         sq_update_total_usage(this, loc->inode, val);
 
@@ -901,10 +905,6 @@ reconfigure(xlator_t *this, dict_t *options)
     GF_OPTION_RECONF("pass-through", this->pass_through, options, bool, out);
     GF_OPTION_RECONF("use-backend", priv->use_backend, options, bool, out);
 
-    /* when an add-brick, or remove-brick happens, brick doesn't get a restart,
-       but client does. So, handle this option in reconfigure */
-    GF_OPTION_RECONF("no-distribute", priv->no_distribute, options, bool, out);
-
 out:
     return 0;
 }
@@ -930,9 +930,11 @@ init(xlator_t *this)
         goto out;
 
     GF_OPTION_INIT("pass-through", this->pass_through, bool, out);
-    GF_OPTION_INIT("no-distribute", priv->no_distribute, bool, out);
     GF_OPTION_INIT("use-backend", priv->use_backend, bool, out);
 
+    /* By default assume this is true, if there is a setxattr to set
+       the total usage, then mark it false  */
+    priv->no_distribute = true;
     INIT_LIST_HEAD(&priv->ns_list);
     LOCK_INIT(&priv->lock);
     this->private = priv;
@@ -1009,16 +1011,6 @@ struct volume_options options[] = {
         .flags = OPT_FLAG_SETTABLE,
         .tags = {"quota", "simple-quota"},
         .description = "Enable/Disable simple-quota translator",
-    },
-    {
-        .key = {"no-distribute"},
-        .type = GF_OPTION_TYPE_BOOL,
-        .default_value = "false",
-        .op_version = {GD_OP_VERSION_9_0},
-        .tags = {"quota", "simple-quota"},
-        .description =
-            "Set to true by volfile generators when there is no distribute in "
-            "the volume. For example (1x3) type of volumes",
     },
     /* for handling 'inode quota', please use backend quota support */
     /* TODO: implement a inode quota specific check in entry fops */
