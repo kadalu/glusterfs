@@ -16,6 +16,7 @@ typedef struct {
     struct list_head ns_list;
     bool no_distribute;
     bool use_backend;
+    bool take_cmd_from_all_client;
 } sq_private_t;
 
 typedef struct {
