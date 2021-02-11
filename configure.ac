@@ -157,16 +157,8 @@ AC_CONFIG_FILES([Makefile
                 xlators/features/bit-rot/src/bitd/Makefile
                 xlators/features/leases/Makefile
                 xlators/features/leases/src/Makefile
-                xlators/features/cloudsync/Makefile
-                xlators/features/cloudsync/src/Makefile
                 xlators/features/utime/Makefile
                 xlators/features/utime/src/Makefile
-                xlators/features/cloudsync/src/cloudsync-plugins/Makefile
-                xlators/features/cloudsync/src/cloudsync-plugins/src/Makefile
-                xlators/features/cloudsync/src/cloudsync-plugins/src/cloudsyncs3/Makefile
-                xlators/features/cloudsync/src/cloudsync-plugins/src/cloudsyncs3/src/Makefile
-                xlators/features/cloudsync/src/cloudsync-plugins/src/cvlt/Makefile
-                xlators/features/cloudsync/src/cloudsync-plugins/src/cvlt/src/Makefile
                 xlators/features/metadisp/Makefile
                 xlators/features/metadisp/src/Makefile
                 xlators/playground/Makefile
