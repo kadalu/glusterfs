@@ -21,24 +21,7 @@
 #include <glusterfs/glusterfs.h>
 #include <libgen.h>
 
-#if (HAVE_LIB_XML)
-#include <libxml/encoding.h>
-#include <libxml/xmlwriter.h>
 
-xmlTextWriterPtr glfsh_writer;
-xmlDocPtr glfsh_doc = NULL;
-#endif
-
-#define XML_RET_CHECK_AND_GOTO(ret, label)                                     \
-    do {                                                                       \
-        if (ret < 0) {                                                         \
-            ret = -1;                                                          \
-            goto label;                                                        \
-        } else                                                                 \
-            ret = 0;                                                           \
-    } while (0)
-
-#define MODE_XML (1 << 0)
 #define MODE_NO_LOG (1 << 1)
 
 typedef struct num_entries {
@@ -66,7 +49,6 @@ typedef struct glfs_info {
 } glfsh_info_t;
 
 glfsh_info_t *glfsh_output = NULL;
-int32_t is_xml;
 
 #define DEFAULT_HEAL_LOG_FILE_DIRECTORY DATADIR "/log/glusterfs"
 #define USAGE_STR                                                              \
@@ -144,263 +126,6 @@ glfsh_print_hr_heal_status(char *path, uuid_t gfid, char *status)
     fflush(stdout);
     return 0;
 }
-
-#if (HAVE_LIB_XML)
-
-int
-glfsh_xml_init()
-{
-    int ret = -1;
-    glfsh_writer = xmlNewTextWriterDoc(&glfsh_doc, 0);
-    if (glfsh_writer == NULL) {
-        return -1;
-    }
-
-    ret = xmlTextWriterStartDocument(glfsh_writer, "1.0", "UTF-8", "yes");
-    XML_RET_CHECK_AND_GOTO(ret, xml_out);
-
-    /* <cliOutput> */
-    ret = xmlTextWriterStartElement(glfsh_writer, (xmlChar *)"cliOutput");
-    XML_RET_CHECK_AND_GOTO(ret, xml_out);
-
-    /* <healInfo> */
-    ret = xmlTextWriterStartElement(glfsh_writer, (xmlChar *)"healInfo");
-    XML_RET_CHECK_AND_GOTO(ret, xml_out);
-    /* <bricks> */
-    ret = xmlTextWriterStartElement(glfsh_writer, (xmlChar *)"bricks");
-    XML_RET_CHECK_AND_GOTO(ret, xml_out);
-    xmlTextWriterFlush(glfsh_writer);
-xml_out:
-    return ret;
-}
-
-int
-glfsh_xml_end(int op_ret, char *op_errstr)
-{
-    int ret = -1;
-    int op_errno = 0;
-    gf_boolean_t alloc = _gf_false;
-
-    if (op_ret < 0) {
-        op_errno = -op_ret;
-        op_ret = -1;
-        if (op_errstr == NULL) {
-            op_errstr = gf_strdup(strerror(op_errno));
-            alloc = _gf_true;
-        }
-    } else {
-        op_errstr = NULL;
-    }
-
-    /* </bricks> */
-    ret = xmlTextWriterEndElement(glfsh_writer);
-    XML_RET_CHECK_AND_GOTO(ret, xml_out);
-
-    /* </healInfo> */
-    ret = xmlTextWriterEndElement(glfsh_writer);
-    XML_RET_CHECK_AND_GOTO(ret, xml_out);
-
-    ret = xmlTextWriterWriteFormatElement(glfsh_writer, (xmlChar *)"opRet",
-                                          "%d", op_ret);
-
-    XML_RET_CHECK_AND_GOTO(ret, xml_out);
-
-    ret = xmlTextWriterWriteFormatElement(glfsh_writer, (xmlChar *)"opErrno",
-                                          "%d", op_errno);
-    XML_RET_CHECK_AND_GOTO(ret, xml_out);
-
-    if (op_errstr)
-        ret = xmlTextWriterWriteFormatElement(
-            glfsh_writer, (xmlChar *)"opErrstr", "%s", op_errstr);
-    else
-        ret = xmlTextWriterWriteFormatElement(glfsh_writer,
-                                              (xmlChar *)"opErrstr", "%s", "");
-    XML_RET_CHECK_AND_GOTO(ret, xml_out);
-    ret = xmlTextWriterEndDocument(glfsh_writer);
-    XML_RET_CHECK_AND_GOTO(ret, xml_out);
-
-    /* Dump xml document to stdout and pretty format it */
-    xmlSaveFormatFileEnc("-", glfsh_doc, "UTF-8", 1);
-
-    xmlFreeTextWriter(glfsh_writer);
-    xmlFreeDoc(glfsh_doc);
-xml_out:
-    if (alloc)
-        GF_FREE(op_errstr);
-    return ret;
-}
-
-int
-glfsh_print_xml_heal_op_status(int ret, uint64_t num_entries, char *fmt_str)
-{
-    int x_ret = 0;
-    if (ret < 0 && num_entries == 0) {
-        x_ret = xmlTextWriterWriteFormatElement(
-            glfsh_writer, (xmlChar *)"status", "%s", strerror(-ret));
-        XML_RET_CHECK_AND_GOTO(x_ret, out);
-        if (fmt_str) {
-            x_ret = xmlTextWriterWriteFormatElement(
-                glfsh_writer, (xmlChar *)"numberOfEntries", "-");
-            XML_RET_CHECK_AND_GOTO(x_ret, out);
-        }
-        goto out;
-    } else if (ret == 0) {
-        x_ret = xmlTextWriterWriteFormatElement(
-            glfsh_writer, (xmlChar *)"status", "%s", "Connected");
-        XML_RET_CHECK_AND_GOTO(x_ret, out);
-    }
-
-    if (ret < 0) {
-        if (fmt_str) {
-            x_ret = xmlTextWriterWriteFormatElement(
-                glfsh_writer, (xmlChar *)"status",
-                "Failed to process entries completely. "
-                "(%s)%s %" PRIu64 "",
-                strerror(-ret), fmt_str, num_entries);
-            XML_RET_CHECK_AND_GOTO(x_ret, out);
-        }
-    } else {
-        if (fmt_str) {
-            x_ret = xmlTextWriterWriteFormatElement(
-                glfsh_writer, (xmlChar *)"numberOfEntries", "%" PRIu64 "",
-                num_entries);
-            XML_RET_CHECK_AND_GOTO(x_ret, out);
-        }
-    }
-out:
-    if (x_ret >= 0) {
-        x_ret = xmlTextWriterEndElement(glfsh_writer);
-        if (x_ret >= 0) {
-            xmlTextWriterFlush(glfsh_writer);
-            x_ret = 0;
-        } else {
-            x_ret = -1;
-        }
-    }
-    return x_ret;
-}
-
-int
-glfsh_print_xml_heal_op_summary(int ret, num_entries_t *num_entries)
-{
-    int x_ret = 0;
-
-    if (ret < 0 && num_entries == 0) {
-        x_ret = xmlTextWriterWriteFormatElement(
-            glfsh_writer, (xmlChar *)"status", "%s", strerror(-ret));
-        XML_RET_CHECK_AND_GOTO(x_ret, out);
-        x_ret = xmlTextWriterWriteFormatElement(
-            glfsh_writer, (xmlChar *)"totalNumberOfEntries", "-");
-        XML_RET_CHECK_AND_GOTO(x_ret, out);
-        x_ret = xmlTextWriterWriteFormatElement(
-            glfsh_writer, (xmlChar *)"numberOfEntriesInHealPending", "-");
-        XML_RET_CHECK_AND_GOTO(x_ret, out);
-        x_ret = xmlTextWriterWriteFormatElement(
-            glfsh_writer, (xmlChar *)"numberOfEntriesInSplitBrain", "-");
-        XML_RET_CHECK_AND_GOTO(x_ret, out);
-        x_ret = xmlTextWriterWriteFormatElement(
-            glfsh_writer, (xmlChar *)"numberOfEntriesPossiblyHealing", "-");
-        XML_RET_CHECK_AND_GOTO(x_ret, out);
-        goto out;
-    } else if (ret == 0) {
-        x_ret = xmlTextWriterWriteFormatElement(
-            glfsh_writer, (xmlChar *)"status", "%s", "Connected");
-        XML_RET_CHECK_AND_GOTO(x_ret, out);
-    }
-
-    if (ret < 0) {
-        x_ret = xmlTextWriterWriteFormatElement(
-            glfsh_writer, (xmlChar *)"status",
-            "Failed to process entries"
-            " completely. "
-            "(%s)totalNumberOfEntries%" PRIu64 "",
-            strerror(-ret), num_entries->num_entries);
-        XML_RET_CHECK_AND_GOTO(x_ret, out);
-    } else {
-        x_ret = xmlTextWriterWriteFormatElement(
-            glfsh_writer, (xmlChar *)"totalNumberOfEntries", "%" PRIu64 "",
-            num_entries->num_entries);
-        XML_RET_CHECK_AND_GOTO(x_ret, out);
-        x_ret = xmlTextWriterWriteFormatElement(
-            glfsh_writer, (xmlChar *)"numberOfEntriesInHealPending",
-            "%" PRIu64 "", num_entries->pending_entries);
-        XML_RET_CHECK_AND_GOTO(x_ret, out);
-        x_ret = xmlTextWriterWriteFormatElement(
-            glfsh_writer, (xmlChar *)"numberOfEntriesInSplitBrain",
-            "%" PRIu64 "", num_entries->spb_entries);
-        XML_RET_CHECK_AND_GOTO(x_ret, out);
-        x_ret = xmlTextWriterWriteFormatElement(
-            glfsh_writer, (xmlChar *)"numberOfEntriesPossiblyHealing",
-            "%" PRIu64 "", num_entries->possibly_healing_entries);
-        XML_RET_CHECK_AND_GOTO(x_ret, out);
-    }
-out:
-    if (x_ret >= 0) {
-        x_ret = xmlTextWriterEndElement(glfsh_writer);
-    }
-    return x_ret;
-}
-
-int
-glfsh_print_xml_file_status(char *path, uuid_t gfid, char *status)
-{
-    int x_ret = 0;
-
-    x_ret = xmlTextWriterStartElement(glfsh_writer, (xmlChar *)"file");
-    XML_RET_CHECK_AND_GOTO(x_ret, out);
-    x_ret = xmlTextWriterWriteFormatAttribute(glfsh_writer, (xmlChar *)"gfid",
-                                              "%s", uuid_utoa(gfid));
-    XML_RET_CHECK_AND_GOTO(x_ret, out);
-    x_ret = xmlTextWriterWriteFormatString(glfsh_writer, "%s", path);
-    XML_RET_CHECK_AND_GOTO(x_ret, out);
-    x_ret = xmlTextWriterEndElement(glfsh_writer);
-    XML_RET_CHECK_AND_GOTO(x_ret, out);
-    xmlTextWriterFlush(glfsh_writer);
-out:
-    return x_ret;
-}
-
-int
-glfsh_print_xml_brick_from_xl(xlator_t *xl, loc_t *rootloc)
-{
-    char *remote_host = NULL;
-    char *remote_subvol = NULL;
-    char *uuid = NULL;
-    int ret = 0;
-    int x_ret = 0;
-
-    ret = dict_get_str(xl->options, "remote-host", &remote_host);
-    if (ret < 0)
-        goto print;
-
-    ret = dict_get_str(xl->options, "remote-subvolume", &remote_subvol);
-    if (ret < 0)
-        goto print;
-    ret = syncop_getxattr(xl, rootloc, &xl->options, GF_XATTR_NODE_UUID_KEY,
-                          NULL, NULL);
-    if (ret < 0)
-        goto print;
-
-    ret = dict_get_str(xl->options, GF_XATTR_NODE_UUID_KEY, &uuid);
-    if (ret < 0)
-        goto print;
-print:
-
-    x_ret = xmlTextWriterStartElement(glfsh_writer, (xmlChar *)"brick");
-    XML_RET_CHECK_AND_GOTO(x_ret, xml_out);
-    x_ret = xmlTextWriterWriteFormatAttribute(
-        glfsh_writer, (xmlChar *)"hostUuid", "%s", uuid ? uuid : "-");
-    XML_RET_CHECK_AND_GOTO(x_ret, xml_out);
-
-    x_ret = xmlTextWriterWriteFormatElement(
-        glfsh_writer, (xmlChar *)"name", "%s:%s",
-        remote_host ? remote_host : "-", remote_subvol ? remote_subvol : "-");
-    XML_RET_CHECK_AND_GOTO(x_ret, xml_out);
-    xmlTextWriterFlush(glfsh_writer);
-xml_out:
-    return ret;
-}
-#endif
 
 int
 glfsh_link_inode_update_loc(loc_t *loc, struct iatt *iattr)
@@ -1503,17 +1228,6 @@ glfsh_info_t glfsh_no_print = {
     .print_spb_status = glfsh_no_print_hr_status,
     .end = glfsh_end_op_granular_entry_heal};
 
-#if (HAVE_LIB_XML)
-glfsh_info_t glfsh_xml_output = {
-    .init = glfsh_xml_init,
-    .print_brick_from_xl = glfsh_print_xml_brick_from_xl,
-    .print_heal_op_status = glfsh_print_xml_heal_op_status,
-    .print_heal_op_summary = glfsh_print_xml_heal_op_summary,
-    .print_heal_status = glfsh_print_xml_file_status,
-    .print_spb_status = glfsh_print_xml_file_status,
-    .end = glfsh_xml_end};
-#endif
-
 static void
 parse_flags(int *argc, char **argv, int *flags)
 {
@@ -1527,9 +1241,6 @@ parse_flags(int *argc, char **argv, int *flags)
             continue;
         if (strcmp(opt, "nolog") == 0) {
             *flags |= MODE_NO_LOG;
-            count++;
-        } else if (strcmp(opt, "xml") == 0) {
-            *flags |= MODE_XML;
             count++;
         }
     }
@@ -1574,8 +1285,6 @@ main(int argc, char **argv)
     parse_flags(&argc, argv, &flags);
     if (flags & MODE_NO_LOG)
         log_level = GF_LOG_NONE;
-    if (flags & MODE_XML)
-        is_xml = 1;
 
     switch (argc) {
         case 2:
@@ -1630,22 +1339,6 @@ main(int argc, char **argv)
     }
 
     glfsh_output = &glfsh_human_readable;
-    if (is_xml) {
-#if (HAVE_LIB_XML)
-        if ((heal_op == GF_SHD_OP_INDEX_SUMMARY) ||
-            (heal_op == GF_SHD_OP_SPLIT_BRAIN_FILES) ||
-            (heal_op == GF_SHD_OP_HEAL_SUMMARY)) {
-            glfsh_output = &glfsh_xml_output;
-        } else {
-            printf(USAGE_STR, argv[0]);
-            ret = -1;
-            goto out;
-        }
-#else
-        /*No point doing anything, just fail the command*/
-        exit(EXIT_FAILURE);
-#endif
-    }
 
     if (heal_op == GF_SHD_OP_GRANULAR_ENTRY_HEAL_ENABLE)
         glfsh_output = &glfsh_no_print;

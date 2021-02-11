@@ -904,59 +904,6 @@ AM_CONDITIONAL([USE_FIREWALLD],test ["x${BUILD_FIREWALLD}" =  "xyes"])
 
 #endof firewald section
 
-# xml-output
-AC_ARG_ENABLE([xml-output],
-              AC_HELP_STRING([--disable-xml-output],
-                             [Disable the xml output]))
-BUILD_XML_OUTPUT="yes"
-if test "x$enable_xml_output" != "xno"; then
-    PKG_CHECK_MODULES([XML], [libxml-2.0], [], [no_xml="yes"])
-    if test "x${no_xml}" = "x"; then
-        AC_DEFINE([HAVE_LIB_XML], [1], [Define to 1 if using libxml2.])
-    else
-        if test "x$enable_georeplication" != "xno"; then
-           AC_MSG_ERROR([libxml2 devel libraries not found])
-        else
-           AC_MSG_WARN([libxml2 devel libraries not found disabling XML support])
-           BUILD_XML_OUTPUT="no"
-        fi
-
-    fi
-else
-    if test "x$enable_georeplication" != "xno"; then
-       AC_MSG_ERROR([geo-replication requires xml output])
-    fi
-    BUILD_XML_OUTPUT="no"
-fi
-# end of xml-output
-
-dnl cloudsync section
-BUILD_CLOUDSYNC="no"
-AC_CHECK_LIB([curl], [curl_easy_setopt], [LIBCURL="-lcurl"])
-if test -n "$LIBCURL";then
-        HAVE_LIBCURL="yes"
-fi
-AC_CHECK_HEADERS([openssl/hmac.h openssl/evp.h openssl/bio.h openssl/buffer.h], [HAVE_OPENSSL="yes"])
-if test "x$HAVE_LIBCURL" = "xyes" -a "x$HAVE_OPENSSL" = "xyes";then
-   HAVE_AMAZONS3="yes"
-fi
-AM_CONDITIONAL([BUILD_AMAZONS3_PLUGIN], [test "x$HAVE_AMAZONS3" = "xyes"])
-if test "x$HAVE_AMAZONS3" = "xyes";then
-   BUILD_CLOUDSYNC="yes"
-fi
-BUILD_CVLT_PLUGIN="no"
-case $host_os in
-#enable cvlt plugin only for linux platforms
-     linux*)
-       BUILD_CVLT_PLUGIN="yes"
-       BUILD_CLOUDSYNC="yes"
-       ;;
-     *)
-       ;;
-esac
-AM_CONDITIONAL([BUILD_CVLT_PLUGIN], [test "x$BUILD_CVLT_PLUGIN" = "xyes"])
-AM_CONDITIONAL([BUILD_CLOUDSYNC], [test "x$BUILD_CLOUDSYNC" = "xyes"])
-dnl end cloudsync section
 
 dnl SELinux feature enablement
 case $host_os in
@@ -1729,7 +1676,6 @@ echo "Enable Debug         : $BUILD_DEBUG"
 echo "Run with Valgrind    : $VALGRIND_TOOL"
 echo "Sanitizer enabled    : $SANITIZER"
 echo "Use syslog           : $USE_SYSLOG"
-echo "XML output           : $BUILD_XML_OUTPUT"
 echo "Unit Tests           : $BUILD_UNITTEST"
 echo "Track priv ports     : $TRACK_PRIVPORTS"
 echo "POSIX ACLs           : $BUILD_POSIX_ACLS"
@@ -1744,7 +1690,6 @@ echo "Legacy gNFS server   : $BUILD_GNFS"
 echo "IPV6 default         : $with_ipv6_default"
 echo "Use TIRPC            : $with_libtirpc"
 echo "With Python          : ${PYTHON_VERSION}"
-echo "Cloudsync            : $BUILD_CLOUDSYNC"
 echo "Metadata dispersal   : $BUILD_METADISP"
 echo "Link with TCMALLOC   : $BUILD_TCMALLOC"
 echo "Enable Brick Mux     : $USE_BRICKMUX"
