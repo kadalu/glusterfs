@@ -1,4 +1,4 @@
-xlator_LTLIBRARIES = dht.la nufa.la switch.la
+xlator_LTLIBRARIES = dht.la
 
 AM_CFLAGS = -Wall $(GF_CFLAGS)
 
@@ -11,17 +11,8 @@ dht_common_source = dht-layout.c dht-helper.c dht-linkfile.c dht-rebalance.c \
 
 dht_la_SOURCES = $(dht_common_source) dht.c
 
-nufa_la_SOURCES = $(dht_common_source) nufa.c
-switch_la_SOURCES = $(dht_common_source) switch.c
-
 dht_la_LDFLAGS = -module $(GF_XLATOR_DEFAULT_LDFLAGS)
 dht_la_LIBADD = $(top_builddir)/libglusterfs/src/libglusterfs.la
-
-nufa_la_LDFLAGS = -module $(GF_XLATOR_DEFAULT_LDFLAGS)
-nufa_la_LIBADD = $(top_builddir)/libglusterfs/src/libglusterfs.la
-
-switch_la_LDFLAGS = -module $(GF_XLATOR_DEFAULT_LDFLAGS)
-switch_la_LIBADD = $(top_builddir)/libglusterfs/src/libglusterfs.la
 
 noinst_HEADERS = dht-common.h dht-mem-types.h dht-messages.h \
 	dht-lock.h $(top_builddir)/xlators/lib/src/libxlator.h
