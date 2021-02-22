@@ -397,7 +397,8 @@ sq_statfs_cbk(call_frame_t *frame, void *cookie, xlator_t *this, int32_t op_ret,
         goto unwind;
 
     /* This step is crucial for a proper sync of xattr at right intervals */
-    if (frame->root->pid == GF_CLIENT_PID_QUOTA_HELPER) {
+    if ((frame->root->pid == GF_CLIENT_PID_QUOTA_HELPER) ||
+        priv->take_cmd_from_all_client) {
         used = sync_data_to_disk(this, ctx);
     } else {
         used = ctx->xattr_size + GF_ATOMIC_GET(ctx->pending_update);
@@ -860,11 +861,12 @@ sq_setxattr(call_frame_t *frame, xlator_t *this, loc_t *loc, dict_t *dict,
         if (loc->inode != loc->inode->ns_inode)
             goto err;
 
-        if (frame->root->pid != GF_CLIENT_PID_QUOTA_HELPER)
+        if (!(priv->take_cmd_from_all_client ||
+	      (frame->root->pid == GF_CLIENT_PID_QUOTA_HELPER)))
             goto err;
 
-	/* we now know there is distribute on client */
-	priv->no_distribute = false;
+        /* we now know there is distribute on client */
+        priv->no_distribute = false;
 
         sq_update_total_usage(this, loc->inode, val);
 
@@ -877,7 +879,8 @@ sq_setxattr(call_frame_t *frame, xlator_t *this, loc_t *loc, dict_t *dict,
     if (IS_ERROR(ret))
         goto wind;
 
-    if (frame->root->pid != GF_CLIENT_PID_QUOTA_HELPER)
+    if (!(priv->take_cmd_from_all_client ||
+	  (frame->root->pid == GF_CLIENT_PID_QUOTA_HELPER)))
         goto err;
 
     /* if this operation is not sent on namespace, fail the operation */
@@ -931,6 +934,8 @@ init(xlator_t *this)
 
     GF_OPTION_INIT("pass-through", this->pass_through, bool, out);
     GF_OPTION_INIT("use-backend", priv->use_backend, bool, out);
+    GF_OPTION_INIT("cmd-from-all-client", priv->take_cmd_from_all_client, bool,
+                   out);
 
     /* By default assume this is true, if there is a setxattr to set
        the total usage, then mark it false  */
@@ -1021,6 +1026,14 @@ struct volume_options options[] = {
         .op_version = {GD_OP_VERSION_9_0},
         .tags = {"quota", "simple-quota"},
         .description = "use backend fs's quota for accounting",
+    },
+    {
+        .key = {"cmd-from-all-client"},
+        .type = GF_OPTION_TYPE_BOOL,
+        .default_value = "false",
+        .op_version = {GD_OP_VERSION_9_0},
+        .tags = {"quota", "simple-quota"},
+        .description = "Allow all clients to send quota set commands.",
     },
     {.key = {NULL}},
 };
