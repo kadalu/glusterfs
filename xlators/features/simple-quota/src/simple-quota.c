@@ -861,9 +861,12 @@ sq_setxattr(call_frame_t *frame, xlator_t *this, loc_t *loc, dict_t *dict,
         if (loc->inode != loc->inode->ns_inode)
             goto err;
 
+        /* Fixes bug kadalu #476. Enable the check back after sometime. */
+        /*
         if (!(priv->take_cmd_from_all_client ||
-	      (frame->root->pid == GF_CLIENT_PID_QUOTA_HELPER)))
+              (frame->root->pid == GF_CLIENT_PID_QUOTA_HELPER)))
             goto err;
+        */
 
         /* we now know there is distribute on client */
         priv->no_distribute = false;
@@ -880,7 +883,7 @@ sq_setxattr(call_frame_t *frame, xlator_t *this, loc_t *loc, dict_t *dict,
         goto wind;
 
     if (!(priv->take_cmd_from_all_client ||
-	  (frame->root->pid == GF_CLIENT_PID_QUOTA_HELPER)))
+          (frame->root->pid == GF_CLIENT_PID_QUOTA_HELPER)))
         goto err;
 
     /* if this operation is not sent on namespace, fail the operation */
