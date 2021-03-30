@@ -858,8 +858,11 @@ sq_setxattr(call_frame_t *frame, xlator_t *this, loc_t *loc, dict_t *dict,
     int ret = dict_get_int64(dict, QUOTA_USAGE_KEY, &val);
     if (IS_SUCCESS(ret)) {
         /* if this operation is not sent on namespace, fail the operation */
-        if (loc->inode != loc->inode->ns_inode)
-            goto err;
+      if (loc->inode != loc->inode->ns_inode) {
+          gf_log(this->name, GF_LOG_WARNING,
+		 "request sent on non-namespace inode (%s)", QUOTA_USAGE_KEY);
+	  goto err;
+      }
 
         /* Fixes bug kadalu #476. Enable the check back after sometime. */
         /*
@@ -882,13 +885,18 @@ sq_setxattr(call_frame_t *frame, xlator_t *this, loc_t *loc, dict_t *dict,
     if (IS_ERROR(ret))
         goto wind;
 
+    /* For timebeing */
+    /*
     if (!(priv->take_cmd_from_all_client ||
           (frame->root->pid == GF_CLIENT_PID_QUOTA_HELPER)))
         goto err;
-
+    */
     /* if this operation is not sent on namespace, fail the operation */
-    if (loc->inode != loc->inode->ns_inode)
+    if (loc->inode != loc->inode->ns_inode) {
+      gf_log(this->name, GF_LOG_WARNING,
+	     "request sent on non-namespace inode (%s)", SQUOTA_LIMIT_KEY);
         goto err;
+    }
 
     frame->local = inode_ref(loc->inode);
 
