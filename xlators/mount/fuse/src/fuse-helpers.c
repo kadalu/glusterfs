@@ -200,6 +200,9 @@ frame_fill_groups(call_frame_t *frame)
         if (!fp) {
             gf_log(this->name, GF_LOG_ERROR, "failed to open %s: %s", filename,
                    strerror(errno));
+            frame->root->groups = frame->root->groups_small;
+            frame->root->ngrps = 1; /* Backup plan */
+            frame->root->groups[0] = 0;
             goto out;
         }
 
