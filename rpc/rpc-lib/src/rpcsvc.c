@@ -2816,7 +2816,7 @@ rpcsvc_init(xlator_t *xl, glusterfs_ctx_t *ctx, dict_t *options,
         poolcount = RPCSVC_POOLCOUNT_MULT * svc->memfactor;
 
     gf_log(GF_RPCSVC, GF_LOG_TRACE, "rx pool: %d", poolcount);
-    svc->rxpool = mem_pool_new(rpcsvc_request_t, poolcount);
+    svc->rxpool = mem_pool_new_ctx(ctx, rpcsvc_request_t, poolcount);
     /* TODO: leak */
     if (!svc->rxpool) {
         gf_log(GF_RPCSVC, GF_LOG_ERROR, "mem pool allocation failed");
