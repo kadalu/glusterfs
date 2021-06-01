@@ -95,6 +95,9 @@ const char *argp_program_bug_address = "<" PACKAGE_BUGREPORT ">";
 static error_t
 parse_opts(int32_t key, char *arg, struct argp_state *_state);
 
+int
+glusterfs_process_volfp(glusterfs_ctx_t *ctx, FILE *fp);
+
 static struct argp_option gf_options[] = {
     {0, 0, 0, 0, "Basic options:"},
     {"volfile-server", ARGP_VOLFILE_SERVER_KEY, "SERVER", 0,
@@ -1526,8 +1529,28 @@ reincarnate(int signum)
     if (cmd_args->volfile_server) {
         gf_smsg("glusterfsd", GF_LOG_INFO, 0, glusterfsd_msg_11, NULL);
         ret = glusterfs_volfile_fetch(ctx);
+    } else if (cmd_args->volfile) {
+        FILE *tmpfp = get_volfp(ctx);
+        ret = glusterfs_volfile_reconfigure(tmpfp, ctx);
+        if (ret == 0) {
+            gf_log("glusterfsd-mgmt", GF_LOG_DEBUG,
+                   "No need to re-load volfile, reconfigure done");
+            goto out;
+        }
+
+        if (ret < 0) {
+            gf_log("glusterfsd-mgmt", GF_LOG_DEBUG, "Reconfigure failed !!");
+            goto out;
+        }
+
+        ret = glusterfs_process_volfp(ctx, tmpfp);
+        if (ret)
+            goto out;
+        if (tmpfp)
+            fclose(tmpfp);
     }
 
+out:
     /* Also, SIGHUP should do logrotate */
     gf_log_logrotate(1);
 
