@@ -553,14 +553,18 @@ sq_unlink_cbk(call_frame_t *frame, void *cookie, xlator_t *this, int32_t op_ret,
     inode_t *namespace = frame->local;
 
     if (IS_SUCCESS(op_ret)) {
-        int64_t blocks = 0;
-        int ret = dict_get_int64(xdata, GF_GET_FILE_BLOCK_COUNT, &blocks);
-        if (IS_SUCCESS(ret)) {
-            gf_log(this->name, GF_LOG_TRACE,
-                   "reduce size by %" PRId64 " blocks", blocks);
+        uint32_t nlink = 0;
+        int ret = dict_get_uint32(xdata, GF_RESPONSE_LINK_COUNT_XDATA, &nlink);
+        if ((nlink == 1)) {
+            int64_t blocks = 0;
+            ret = dict_get_int64(xdata, GF_GET_FILE_BLOCK_COUNT, &blocks);
+            if (IS_SUCCESS(ret)) {
+                gf_log(this->name, GF_LOG_TRACE,
+                       "reduce size by %" PRId64 " blocks", blocks);
+                sq_update_namespace(this, namespace, preparent, postparent,
+                                    -(blocks * 512));
+            }
         }
-        sq_update_namespace(this, namespace, preparent, postparent,
-                            -(blocks * 512));
     }
 
     frame->local = NULL;
@@ -578,10 +582,17 @@ sq_unlink(call_frame_t *frame, xlator_t *this, loc_t *loc, int32_t xflag,
     xdata = xdata ? dict_ref(xdata) : dict_new();
     if (!xdata)
         goto wind;
-    int ret = dict_set_int64(xdata, GF_GET_FILE_BLOCK_COUNT, 0);
+    int ret = dict_set_uint32(xdata, GF_REQUEST_LINK_COUNT_XDATA, 1);
     if (IS_ERROR(ret))
         gf_log(this->name, GF_LOG_ERROR,
-               "BUG: dict set failed (pargfid: %s, name: %s), "
+               "dict set failed (pargfid: %s, name: %s), "
+               "still continuing",
+               uuid_utoa(loc->pargfid), loc->name);
+
+    ret = dict_set_uint32(xdata, GF_GET_FILE_BLOCK_COUNT, 1);
+    if (IS_ERROR(ret))
+        gf_log(this->name, GF_LOG_ERROR,
+               "dict set failed (pargfid: %s, name: %s), "
                "still continuing",
                uuid_utoa(loc->pargfid), loc->name);
 
@@ -603,7 +614,7 @@ sq_rmdir_cbk(call_frame_t *frame, void *cookie, xlator_t *this, int32_t op_ret,
 
     if (IS_SUCCESS(op_ret)) {
         /* Just remove 1 4k block */
-        sq_update_namespace(this, namespace, preparent, postparent, 4096);
+        sq_update_namespace(this, namespace, preparent, postparent, -4096);
     }
 
     frame->local = NULL;
@@ -631,7 +642,7 @@ sq_create_cbk(call_frame_t *frame, void *cookie, xlator_t *this, int32_t op_ret,
     inode_t *namespace = frame->local;
 
     if (IS_SUCCESS(op_ret)) {
-        sq_update_namespace(this, namespace, preparent, postparent, 0);
+        sq_update_namespace(this, namespace, preparent, postparent, 4096);
     }
 
     frame->local = NULL;
@@ -686,7 +697,6 @@ int32_t
 sq_mkdir(call_frame_t *frame, xlator_t *this, loc_t *loc, mode_t mode,
          mode_t umask, dict_t *xdata)
 {
-    /* Check for 4k size */
     int32_t op_errno = sq_check_usage(this, loc->inode->ns_inode, 4096);
     if (op_errno)
         goto fail;
@@ -858,11 +868,11 @@ sq_setxattr(call_frame_t *frame, xlator_t *this, loc_t *loc, dict_t *dict,
     int ret = dict_get_int64(dict, QUOTA_USAGE_KEY, &val);
     if (IS_SUCCESS(ret)) {
         /* if this operation is not sent on namespace, fail the operation */
-      if (loc->inode != loc->inode->ns_inode) {
-          gf_log(this->name, GF_LOG_WARNING,
-		 "request sent on non-namespace inode (%s)", QUOTA_USAGE_KEY);
-	  goto err;
-      }
+        if (loc->inode != loc->inode->ns_inode) {
+            gf_log(this->name, GF_LOG_WARNING,
+                   "request sent on non-namespace inode (%s)", QUOTA_USAGE_KEY);
+            goto err;
+        }
 
         /* Fixes bug kadalu #476. Enable the check back after sometime. */
         /*
@@ -893,8 +903,8 @@ sq_setxattr(call_frame_t *frame, xlator_t *this, loc_t *loc, dict_t *dict,
     */
     /* if this operation is not sent on namespace, fail the operation */
     if (loc->inode != loc->inode->ns_inode) {
-      gf_log(this->name, GF_LOG_WARNING,
-	     "request sent on non-namespace inode (%s)", SQUOTA_LIMIT_KEY);
+        gf_log(this->name, GF_LOG_WARNING,
+               "request sent on non-namespace inode (%s)", SQUOTA_LIMIT_KEY);
         goto err;
     }
 
@@ -909,6 +919,75 @@ wind:
 
 err:
     STACK_UNWIND_STRICT(setxattr, frame, -1, op_errno, xdata);
+    return 0;
+}
+
+int32_t
+sq_fallocate_cbk(call_frame_t *frame, void *cookie, xlator_t *this,
+                 int32_t op_ret, int32_t op_errno, struct iatt *prebuf,
+                 struct iatt *postbuf, dict_t *xdata)
+{
+    inode_t *namespace = frame->local;
+
+    if (IS_SUCCESS(op_ret)) {
+        /* Just remove 1 4k block */
+        sq_update_namespace(this, namespace, prebuf, postbuf, 0);
+    }
+
+    frame->local = NULL;
+    STACK_UNWIND_STRICT(fallocate, frame, op_ret, op_errno, prebuf, postbuf,
+                        xdata);
+    inode_unref(namespace);
+
+    return 0;
+}
+
+int32_t
+sq_fallocate(call_frame_t *frame, xlator_t *this, fd_t *fd, int32_t mode,
+             off_t offset, size_t len, dict_t *xdata)
+{
+    int32_t op_errno = sq_check_usage(this, fd->inode->ns_inode, len);
+    if (op_errno)
+        goto fail;
+
+    frame->local = inode_ref(fd->inode->ns_inode);
+    STACK_WIND(frame, sq_fallocate_cbk, FIRST_CHILD(this),
+               FIRST_CHILD(this)->fops->fallocate, fd, mode, offset, len,
+               xdata);
+    return 0;
+fail:
+    STACK_UNWIND_STRICT(fallocate, frame, -1, op_errno, NULL, NULL, NULL);
+
+    return 0;
+}
+
+int32_t
+sq_discard_cbk(call_frame_t *frame, void *cookie, xlator_t *this,
+               int32_t op_ret, int32_t op_errno, struct iatt *prebuf,
+               struct iatt *postbuf, dict_t *xdata)
+{
+    inode_t *namespace = frame->local;
+
+    if (IS_SUCCESS(op_ret)) {
+        /* Just remove 1 4k block */
+        sq_update_namespace(this, namespace, prebuf, postbuf, 0);
+    }
+
+    frame->local = NULL;
+    STACK_UNWIND_STRICT(discard, frame, op_ret, op_errno, prebuf, postbuf,
+                        xdata);
+    inode_unref(namespace);
+
+    return 0;
+}
+
+int32_t
+sq_discard(call_frame_t *frame, xlator_t *this, fd_t *fd, off_t offset,
+           size_t len, dict_t *xdata)
+{
+    frame->local = inode_ref(fd->inode->ns_inode);
+    STACK_WIND(frame, sq_discard_cbk, FIRST_CHILD(this),
+               FIRST_CHILD(this)->fops->discard, fd, offset, len, xdata);
     return 0;
 }
 
@@ -1016,6 +1095,8 @@ struct xlator_fops fops = {
     .truncate =
         sq_truncate, /* not implementing a check as it would punch hole */
     .ftruncate = sq_ftruncate,
+    .fallocate = sq_fallocate,
+    .discard = sq_discard,
 };
 
 struct volume_options options[] = {
