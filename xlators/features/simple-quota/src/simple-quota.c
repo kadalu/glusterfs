@@ -54,11 +54,19 @@ sync_data_to_disk(xlator_t *this, sq_inode_t *ictx)
         return value_on_disk;
     }
 
+    if (value_on_disk < 0) {
+        /* Some bug, this should have not happened */
+        gf_msg(this->name, GF_LOG_INFO, 0, 0,
+               "quota usage is below zero (%ld), resetting to 0",
+               value_on_disk);
+        value_on_disk = 0;
+    }
+
     /* Send the request to actual gfid */
     loc.inode = inode_ref(ictx->ns);
     gf_uuid_copy(loc.gfid, ictx->ns->gfid);
 
-    gf_log("quota2", GF_LOG_DEBUG, "%s: Writing size of %" PRId64,
+    gf_msg(this->name, GF_LOG_DEBUG, 0, 0, "%s: Writing size of %" PRId64,
            uuid_utoa(ictx->ns->gfid), value_on_disk);
 
     /* As we are doing only operation from server side */
@@ -132,7 +140,7 @@ sq_set_ns_hardlimit(xlator_t *this, inode_t *inode, int64_t limit, int64_t size,
     }
     UNLOCK(&priv->lock);
 
-    gf_log(this->name, GF_LOG_INFO,
+    gf_msg(this->name, GF_LOG_INFO, 0, 0,
            "%s: hardlimit set (%" PRId64 ", %" PRId64 ")",
            uuid_utoa(inode->gfid), limit, size);
 out:
@@ -141,7 +149,7 @@ out:
 
 static inline void
 sq_update_namespace(xlator_t *this, inode_t *ns, struct iatt *prebuf,
-                    struct iatt *postbuf, int64_t size)
+                    struct iatt *postbuf, int64_t size, char *fop)
 {
     sq_private_t *priv = this->private;
     sq_inode_t *sq_ctx;
@@ -151,8 +159,11 @@ sq_update_namespace(xlator_t *this, inode_t *ns, struct iatt *prebuf,
         goto out;
 
     /* If the size is passed, use that instead */
-    if (!size && postbuf && prebuf)
+    if (!size && postbuf && prebuf) {
         size = (postbuf->ia_blocks - prebuf->ia_blocks) * 512;
+        gf_msg_debug(this->name, 0, "%s: %lu - %lu", fop, postbuf->ia_blocks,
+               prebuf->ia_blocks);
+    }
 
     bool is_inode_linked = IATT_TYPE_VALID(ns->ia_type);
     inode_ctx_get(ns, this, &tmp_mq);
@@ -166,13 +177,15 @@ sq_update_namespace(xlator_t *this, inode_t *ns, struct iatt *prebuf,
     if (ns != sq_ctx->ns) {
         /* Set this, as it is possible to have linked a wrong
            inode pointer in lookup */
-        gf_log(this->name, GF_LOG_DEBUG, "namespace not being set - %p %p", ns,
-               sq_ctx->ns);
+        gf_msg_debug(this->name, 0,
+               "namespace not being set - %p %p", ns, sq_ctx->ns);
         sq_ctx->ns = ns;
     }
 
-    if (size)
+    if (size) {
         GF_ATOMIC_ADD(sq_ctx->pending_update, size);
+    }
+
 out:
     return;
 }
@@ -212,8 +225,9 @@ sq_update_hard_limit(xlator_t *this, inode_t *ns, int64_t limit, int64_t size)
             goto out;
     }
 
-    gf_log(this->name, GF_LOG_INFO, "hardlimit update: %s %" PRId64 " %" PRId64,
-           uuid_utoa(ns->gfid), limit, size);
+    gf_msg(this->name, GF_LOG_INFO, 0, 0,
+           "hardlimit update: %s %" PRId64 " %" PRId64, uuid_utoa(ns->gfid),
+           limit, size);
     sq_ctx = (sq_inode_t *)(uintptr_t)tmp_mq;
     sq_ctx->hard_lim = limit;
     /* shouldn't come here with 'size > 0' */
@@ -442,7 +456,7 @@ sq_statfs(call_frame_t *frame, xlator_t *this, loc_t *loc, dict_t *xdata)
 {
     frame->local = inode_ref(loc->inode->ns_inode);
     /* This is required for setting 'ns' inode in ctx */
-    sq_update_namespace(this, loc->inode->ns_inode, NULL, NULL, 0);
+    sq_update_namespace(this, loc->inode->ns_inode, NULL, NULL, 0, "statfs");
 
     STACK_WIND(frame, sq_statfs_cbk, FIRST_CHILD(this),
                FIRST_CHILD(this)->fops->statfs, loc, xdata);
@@ -457,7 +471,7 @@ sq_writev_cbk(call_frame_t *frame, void *cookie, xlator_t *this, int32_t op_ret,
     inode_t *namespace = frame->local;
 
     if (IS_SUCCESS(op_ret)) {
-        sq_update_namespace(this, namespace, prebuf, postbuf, 0);
+        sq_update_namespace(this, namespace, prebuf, postbuf, 0, "writev");
     }
 
     frame->local = NULL;
@@ -497,7 +511,7 @@ sq_truncate_cbk(call_frame_t *frame, void *cookie, xlator_t *this,
     inode_t *namespace = frame->local;
 
     if (IS_SUCCESS(op_ret)) {
-        sq_update_namespace(this, namespace, prebuf, postbuf, 0);
+        sq_update_namespace(this, namespace, prebuf, postbuf, 0, "truncate");
     }
 
     frame->local = NULL;
@@ -525,7 +539,7 @@ sq_ftruncate_cbk(call_frame_t *frame, void *cookie, xlator_t *this,
     inode_t *namespace = frame->local;
 
     if (IS_SUCCESS(op_ret)) {
-        sq_update_namespace(this, namespace, prebuf, postbuf, 0);
+        sq_update_namespace(this, namespace, prebuf, postbuf, 0, "ftruncate");
     }
 
     frame->local = NULL;
@@ -554,16 +568,15 @@ sq_unlink_cbk(call_frame_t *frame, void *cookie, xlator_t *this, int32_t op_ret,
 
     if (IS_SUCCESS(op_ret)) {
         uint32_t nlink = 0;
+        uint64_t blocks = 0;
         int ret = dict_get_uint32(xdata, GF_RESPONSE_LINK_COUNT_XDATA, &nlink);
         if ((nlink == 1)) {
-            int64_t blocks = 0;
-            ret = dict_get_int64(xdata, GF_GET_FILE_BLOCK_COUNT, &blocks);
-            if (IS_SUCCESS(ret)) {
-                gf_log(this->name, GF_LOG_TRACE,
-                       "reduce size by %" PRId64 " blocks", blocks);
-                sq_update_namespace(this, namespace, preparent, postparent,
-                                    -(blocks * 512));
-            }
+            ret = dict_get_uint64(xdata, GF_GET_FILE_BLOCK_COUNT, &blocks);
+            gf_msg(this->name, GF_LOG_DEBUG, 0, 0,
+                   "reduce size by %" PRIu64 " blocks (ret: %d)", blocks, ret);
+            sq_update_namespace(this, namespace, preparent, postparent,
+                                -((blocks + 1) * 512), "unlink");
+            /* extra 1 for create offset */
         }
     }
 
@@ -614,12 +627,13 @@ sq_rmdir_cbk(call_frame_t *frame, void *cookie, xlator_t *this, int32_t op_ret,
 
     if (IS_SUCCESS(op_ret)) {
         /* Just remove 1 4k block */
-        sq_update_namespace(this, namespace, preparent, postparent, -4096);
+        // sq_update_namespace(this, namespace, preparent, postparent, -4096,
+        // "rmdir");
     }
 
     frame->local = NULL;
     inode_unref(namespace);
-    STACK_UNWIND_STRICT(unlink, frame, op_ret, op_errno, preparent, postparent,
+    STACK_UNWIND_STRICT(rmdir, frame, op_ret, op_errno, preparent, postparent,
                         xdata);
     return 0;
 }
@@ -642,7 +656,8 @@ sq_create_cbk(call_frame_t *frame, void *cookie, xlator_t *this, int32_t op_ret,
     inode_t *namespace = frame->local;
 
     if (IS_SUCCESS(op_ret)) {
-        sq_update_namespace(this, namespace, preparent, postparent, 4096);
+        sq_update_namespace(this, namespace, preparent, postparent, 512,
+                            "create");
     }
 
     frame->local = NULL;
@@ -657,12 +672,12 @@ sq_create(call_frame_t *frame, xlator_t *this, loc_t *loc, int32_t flags,
           mode_t mode, mode_t umask, fd_t *fd, dict_t *xdata)
 {
     /* Check for 4k size */
-    int32_t op_errno = sq_check_usage(this, loc->inode->ns_inode, 4096);
+    int32_t op_errno = sq_check_usage(this, loc->parent->ns_inode, 4096);
 
     if (op_errno)
         goto fail;
 
-    frame->local = inode_ref(loc->inode->ns_inode);
+    frame->local = inode_ref(loc->parent->ns_inode);
     STACK_WIND(frame, sq_create_cbk, FIRST_CHILD(this),
                FIRST_CHILD(this)->fops->create, loc, flags, mode, umask, fd,
                xdata);
@@ -682,7 +697,8 @@ sq_mkdir_cbk(call_frame_t *frame, void *cookie, xlator_t *this, int32_t op_ret,
     inode_t *namespace = frame->local;
 
     if (IS_SUCCESS(op_ret)) {
-        sq_update_namespace(this, namespace, preparent, postparent, 0);
+        // sq_update_namespace(this, namespace, preparent, postparent, 4096,
+        // "mkdir");
     }
 
     frame->local = NULL;
@@ -697,11 +713,11 @@ int32_t
 sq_mkdir(call_frame_t *frame, xlator_t *this, loc_t *loc, mode_t mode,
          mode_t umask, dict_t *xdata)
 {
-    int32_t op_errno = sq_check_usage(this, loc->inode->ns_inode, 4096);
+    int32_t op_errno = sq_check_usage(this, loc->parent->ns_inode, 4096);
     if (op_errno)
         goto fail;
 
-    frame->local = inode_ref(loc->inode->ns_inode);
+    frame->local = inode_ref(loc->parent->ns_inode);
     STACK_WIND(frame, sq_mkdir_cbk, FIRST_CHILD(this),
                FIRST_CHILD(this)->fops->mkdir, loc, mode, umask, xdata);
     return 0;
@@ -931,7 +947,7 @@ sq_fallocate_cbk(call_frame_t *frame, void *cookie, xlator_t *this,
 
     if (IS_SUCCESS(op_ret)) {
         /* Just remove 1 4k block */
-        sq_update_namespace(this, namespace, prebuf, postbuf, 0);
+        sq_update_namespace(this, namespace, prebuf, postbuf, 0, "fallocate");
     }
 
     frame->local = NULL;
@@ -970,7 +986,7 @@ sq_discard_cbk(call_frame_t *frame, void *cookie, xlator_t *this,
 
     if (IS_SUCCESS(op_ret)) {
         /* Just remove 1 4k block */
-        sq_update_namespace(this, namespace, prebuf, postbuf, 0);
+        sq_update_namespace(this, namespace, prebuf, postbuf, 0, "discard");
     }
 
     frame->local = NULL;
